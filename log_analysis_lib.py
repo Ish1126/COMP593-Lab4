@@ -1,93 +1,110 @@
-"""
-Library of functions that are useful for analyzing plain-text log files.
-"""
+import log_analysis_lib
 import re
-import sys
 import os
 import pandas as pd
 
 def main():
-    # Retrieve the file path of the log file from the command line.
-    log_path = get_file_path_from_cmd_line()
+    # Retrieve the path of the log file from the command line.
+    log_path = log_analysis_lib.get_file_path_from_cmd_line()
 
-    # TODO: Implement the usage of filter_log_by_regex() to examine the gateway log as outlined in Step 5
-    filter_log_by_regex(log_path, 'error', print_records=True, print_summary=True )
+    # Calculate the amount of traffic associated with each port.
+    port_traffic = tally_port_traffic(log_path)
     
-    # TODO: Implement the usage of filter_log_by_regex() to extract information from the gateway log according to Step 6
-    
-    filtered_records, extracted_data = filter_log_by_regex(log_path, 'SRC=(.*?) DST=(.*?) LEN=(.*?) ')
-    extracted_df = pd.DataFrame(extracted_data, columns = ('Source ip', 'Destination IP', 'Length'))
-    extracted_df.to_csv('data.csv', index = False)
-    return
+    # Generate reports for ports that have 100 or more entries, as instructed in step 9.
+    for port, count in port_traffic.items():
+        if count >= 100:
+            generate_port_traffic_report(log_path, port)
 
+    # Create a report detailing invalid user login attempts.
+    generate_invalid_user_report(log_path)
 
-def get_file_path_from_cmd_line(param_num=1):
-    """Obtains the file path from a command line parameter.
+    # Produce a log containing records originating from IP 220.195.35.40
+    generate_source_ip_log(log_path, '220.195.35.40')
 
-    Terminates the script if no file is provided as a command line parameter or if the specified path does not correspond to an existing file.
+def tally_port_traffic(log_path):
+    """This function generates a dictionary where destination port numbers extracted from a designed log file are used as keys, and the values represent the frequency of occurrence of each port number.
 
-    Parameters:
-        param_num (int): The posstion of the command line parameter containing the file path. Default is 1.
+    Args:
+        log_path (str): Path to the log file.
 
     Returns:
-        str: The file path
+        dict: Dictionary of destination port number counts
     """
-    # TODO: Complete the function implementation as described in Step 3.
-    if len(sys.argv) < param_num+1:
-        print(f'Error: Mising log file path expected as command line parameter {param_num}.')
-        sys.exit(1)
+    dpt_logs = log_analysis_lib.filter_log_by_regex(log_path, r'DPT=(.*?) ')[1]
 
-    log_path = os.path.abspath(sys.argv[param_num])
+    dpt_tally = {}
 
-    if not os.path.isfile(log_path):
-        print(f'Error: {log_path} is not a valid filepath.')
-        sys.exit(2)
-        
-    return log_path
+    for dpt in dpt_logs:
+        dpt_tally[dpt[0]] = dpt_tally.get(dpt[0], 0) + 1
 
+    return dpt_tally
 
-def filter_log_by_regex(log_path, regex, ignore_case=True, print_summary=False, print_records=False):
-    """Retrieves a collection of records from a log file that satisfy a specified regex pattern.
+def generate_port_traffic_report(log_path, port_number):
+    """Creates a CSV report containing all network traffic in a log file for a specified destination port number.
 
-    Parameters:
-        log_file (str): Path of the log file
-        regex (str): The regular expression filter
-        ignore_case (bool, optional): Indicates whether to perform case-insensitive regex matching. Defaults to True.
-        print_summary (bool, optional): Determines if a summary of the results should be printed. Defaults to False.
-        print_records (bool, optional): Determines if all records matching the regex should be printed. Defaults to False.
-
-    Returns:
-        (list, list): A list of records matching the regex pattern, and a list of tuples containing captured data.
+    Args:
+        log_path (str): Path to the log file.
+        port_number (str or int): Destination port number
     """
-    # Initalize lists that will be returned by the function
-    filtered_records = []
-    captured_data = []
-
-    # Set the flag for case sensitivity in the regex search.
-    search_flags = re.IGNORECASE if ignore_case else 0
-
-    # Go through the log file line by line
+    capture_data = []
+    
     with open(log_path, 'r') as file:
         for record in file:
-            # Examine each line for a regular expression match.
-            match = re.search(regex, record, search_flags)
+            pattern = f'.*DPT={port_number}.*'
+            search_flags = re.IGNORECASE
+            match = re.search(pattern, record, search_flags)
             if match:
-                # Append lines that meet the regular expresion criteruia to the list of filtered records.
-                filtered_records.append(record[:-1]) # Eliminate the ending newline character.
-                # Verify whether the regex match includes any captured groups.
-                if match.lastindex:
-                    # Append the tuple of captured data to the list of captured data.
-                    captured_data.append(match.groups())
+                match1 = re.search(r'([A-Za-z].*[0-9][0-9]) ([0-9][0-9].[0-9][0-9].[0-9][0-9]).*SRC=(.*?) DST=(.*?) .*SPT=(.*?) DPT=(.*?) ', record, search_flags)
+                capture_data.append(match1.groups())
+                
+                file_path = os.path.dirname(os.path.abspath(__file__))
+                file_name = f'destination_port_{port_number}_report.csv'
+                proper_file_path = os.path.join(file_path, file_name)
+                
+                df = pd.DataFrame(capture_data, columns=('Date', 'Time', 'Source IP address', 'Destination IP address', 'Source port', 'Destination port'))
+                df.to_csv(proper_file_path, index=False)
 
-    # Print all the records if the option to print is enabled.
-    if print_records is True:
-        print(*filtered_records, sep='\n', end='\n')
+def generate_invalid_user_report(log_path):
+    """Generates a CSV report of all network activities in a log file indicating an attempt to log in as an invalid user.
 
-    # Print a summary of the results if the option to print is enabled.
-    if print_summary is True:
-        print(f'The log file contains {len(filtered_records)} records that case-{"in" if ignore_case else ""}sensitive match the regex "{regex}".')
+    Args:
+        log_path (str): Path to the log file.
+    """
+    capture_data = []
+    
+    with open(log_path, 'r') as file:
+        for record in file:
+            pattern = '.*Invalid user.*'
+            search_flags = re.IGNORECASE
+            match = re.search(pattern, record, search_flags)
+            if match:
+                match1 = re.search(r'([A-Za-z].*[0-9][0-9]) ([0-9][0-9].[0-9][0-9].[0-9][0-9]).*Invalid user ([A-Za-z]*) .* ([0-9]+.[0-9]+.[0-9]+.[0-9]+)', record)
+                capture_data.append(match1.groups())
+                
+                file_path = os.path.dirname(os.path.abspath(__file__))
+                file_name = 'invalid_users.csv'
+                proper_file_path = os.path.join(file_path, file_name)
+                
+                df = pd.DataFrame(capture_data, columns=('Date', 'Time', 'Username', 'IP Address'))
+                df.to_csv(proper_file_path, index=False)
 
-    return (filtered_records, captured_data)
+def generate_source_ip_log(log_path, ip_address):
+    """Generates a plain text .log file containing all records from a source log file that match a specified source IP address.
+
+    Args:
+        log_path (str): Path to the log file.
+        ip_address (str): Source IP address
+    """
+    all_info_src_address = log_analysis_lib.filter_log_by_regex(log_path, f'.*SRC={ip_address}.*')[0]
+    
+    file_path = os.path.dirname(os.path.abspath(__file__))
+    new_ip = re.sub(r'\.', '_', ip_address)
+    file_name = f'source_ip_{new_ip}.log'
+    proper_file_path = os.path.join(file_path, file_name)
+    
+    with open(proper_file_path, 'w') as o_file:
+        for record in all_info_src_address:
+            o_file.write(record + '\n')
 
 if __name__ == '__main__':
-    main()              
+    main()
