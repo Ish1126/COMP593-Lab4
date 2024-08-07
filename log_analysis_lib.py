@@ -2,6 +2,13 @@ import log_analysis_lib
 import re
 import os
 import pandas as pd
+import sys
+
+def get_file_path_from_cmd_line():
+    if len(sys.argv) != 2:
+        print("Usage: python log_analysis_lib.py <log_file_path>")
+        sys.exit(1)
+    return sys.argv[1]
 
 def main():
     # Retrieve the path of the log file from the command line.
